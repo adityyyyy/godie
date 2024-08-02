@@ -52,6 +52,33 @@ func read_file(filename string) {
 	}
 }
 
+func write_file(filename string) {
+	file, err := os.Create(filename)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	writer := bufio.NewWriter(file)
+
+	for row, line := range text_buffer {
+		new_line := "\n"
+		if row == len(text_buffer)-1 {
+			new_line = ""
+		}
+
+		write_line := string(line) + new_line
+
+		_, err := writer.WriteString(write_line)
+		if err != nil {
+			log.Fatal("Error: ", err)
+		}
+	}
+
+	writer.Flush()
+	modified = false
+}
+
 func insert_rune(event termbox.Event) {
 	insert_runes := make([]rune, len(text_buffer[currentY])+1)
 	copy(insert_runes[:currentX], text_buffer[currentY][:currentX])
@@ -71,6 +98,55 @@ func insert_rune(event termbox.Event) {
 
 	text_buffer[currentY] = insert_runes
 	currentX++
+}
+
+func delete_rune() {
+	if currentX > 0 {
+		currentX--
+		delete_line := make([]rune, len(text_buffer[currentY])-1)
+		copy(delete_line[:currentX], text_buffer[currentY][:currentX])
+		copy(delete_line[currentX:], text_buffer[currentY][currentX+1:])
+		text_buffer[currentY] = delete_line
+	} else if currentY > 0 {
+		append_line := make([]rune, len(text_buffer[currentY]))
+
+		copy(append_line, text_buffer[currentY][currentX:])
+
+		new_text_buffer := make([][]rune, len(text_buffer)-1)
+
+		copy(new_text_buffer[:currentY], text_buffer[:currentY])
+		copy(new_text_buffer[currentY:], text_buffer[currentY+1:])
+
+		text_buffer = new_text_buffer
+		currentY--
+		currentX = len(text_buffer[currentY])
+
+		insert_line := make([]rune, len(text_buffer[currentY])+len(append_line))
+
+		copy(insert_line[:len(text_buffer[currentY])], text_buffer[currentY][:])
+		copy(insert_line[len(text_buffer[currentY]):], append_line)
+
+		text_buffer[currentY] = insert_line
+	}
+}
+
+func insert_line() {
+	right_line := make([]rune, len(text_buffer[currentY][currentX:]))
+	left_line := make([]rune, len(text_buffer[currentY][:currentX]))
+	new_text_buffer := make([][]rune, len(text_buffer)+1)
+
+	copy(right_line, text_buffer[currentY][currentX:])
+	copy(left_line, text_buffer[currentY][:currentX])
+	copy(new_text_buffer, text_buffer[:currentY])
+
+	new_text_buffer[currentY] = left_line
+	currentY++
+	currentX = 0
+	new_text_buffer[currentY] = right_line
+
+	copy(new_text_buffer[currentY+1:], text_buffer[currentY:])
+
+	text_buffer = new_text_buffer
 }
 
 func scroll_text_buffer() {
@@ -208,10 +284,32 @@ func process_key_press() {
 
 			case 'e':
 				mode = 1
+
+			case 'w':
+				write_file(source_file)
 			}
 		}
 	} else {
 		switch key_event.Key {
+		case termbox.KeyEnter:
+			if mode == 1 {
+				insert_line()
+				modified = true
+			}
+
+		case termbox.KeyBackspace, termbox.KeyBackspace2:
+			if mode == 1 {
+				delete_rune()
+				modified = true
+			} else {
+				if currentX > 0 {
+					currentX--
+				} else if currentY > 0 {
+					currentY--
+					currentX = len(text_buffer[currentY])
+				}
+			}
+
 		case termbox.KeyTab:
 			if mode == 1 {
 				for i := 0; i < 2; i++ {
@@ -265,17 +363,16 @@ func process_key_press() {
 			}
 
 		case termbox.KeyArrowRight:
-			if currentX < len(text_buffer[currentY])-1 {
+			if currentX < len(text_buffer[currentY]) {
 				currentX++
 			} else if currentY < len(text_buffer)-1 {
 				currentY++
 				currentX = 0
 			}
 		}
-		if len(text_buffer[currentY]) == 0 {
-			currentX = 0
-		} else if currentX > len(text_buffer[currentY])-1 {
-			currentX = len(text_buffer[currentY]) - 1
+
+		if currentX > len(text_buffer[currentY]) {
+			currentX = len(text_buffer[currentY])
 		}
 	}
 }
