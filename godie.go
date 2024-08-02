@@ -52,6 +52,45 @@ func read_file(filename string) {
 	}
 }
 
+func insert_rune(event termbox.Event) {
+	insert_runes := make([]rune, len(text_buffer[currentY])+1)
+	copy(insert_runes[:currentX], text_buffer[currentY][:currentX])
+
+	switch event.Key {
+	case termbox.KeySpace:
+		insert_runes[currentX] = rune(' ')
+
+	case termbox.KeyTab:
+		insert_runes[currentX] = rune(' ')
+
+	default:
+		insert_runes[currentX] = rune(event.Ch)
+	}
+
+	copy(insert_runes[currentX+1:], text_buffer[currentY][currentX:])
+
+	text_buffer[currentY] = insert_runes
+	currentX++
+}
+
+func scroll_text_buffer() {
+	if currentY < offsetY {
+		offsetY = currentY
+	}
+
+	if currentX < offsetX {
+		offsetX = currentX
+	}
+
+	if currentY >= offsetY+ROWS {
+		offsetY = currentY - ROWS + 1
+	}
+
+	if currentX >= offsetX+COLS {
+		offsetX = offsetX - COLS + 1
+	}
+}
+
 func display_text_buffer() {
 	var row, col int
 
@@ -138,6 +177,109 @@ func print_message(col, row int, fg, bg termbox.Attribute, message string) {
 	}
 }
 
+func get_key() termbox.Event {
+	var key_event termbox.Event
+	switch event := termbox.PollEvent(); event.Type {
+	case termbox.EventKey:
+		key_event = event
+
+	case termbox.EventError:
+		panic(event.Err)
+	}
+
+	return key_event
+}
+
+func process_key_press() {
+	key_event := get_key()
+
+	if key_event.Key == termbox.KeyEsc {
+		mode = 0
+	} else if key_event.Ch != 0 {
+		if mode == 1 {
+
+			insert_rune(key_event)
+			modified = true
+		} else {
+			switch key_event.Ch {
+			case 'q':
+				termbox.Close()
+				os.Exit(0)
+
+			case 'e':
+				mode = 1
+			}
+		}
+	} else {
+		switch key_event.Key {
+		case termbox.KeyTab:
+			if mode == 1 {
+				for i := 0; i < 2; i++ {
+					insert_rune(key_event)
+				}
+				modified = true
+			}
+
+		case termbox.KeySpace:
+			if mode == 1 {
+				insert_rune(key_event)
+				modified = true
+			}
+
+		case termbox.KeyHome:
+			currentX = 0
+
+		case termbox.KeyEnd:
+			currentX = len(text_buffer[currentY]) - 1
+
+		case termbox.KeyPgup:
+			if currentY-int(ROWS/4) >= 0 {
+				currentY -= int(ROWS / 4)
+			} else {
+				currentY = 0
+			}
+
+		case termbox.KeyPgdn:
+			if currentY+int(ROWS/4) < len(text_buffer) {
+				currentY += int(ROWS / 4)
+			} else {
+				currentY = len(text_buffer) - 1
+			}
+
+		case termbox.KeyArrowUp:
+			if currentY != 0 {
+				currentY--
+			}
+
+		case termbox.KeyArrowDown:
+			if currentY < len(text_buffer)-1 {
+				currentY++
+			}
+
+		case termbox.KeyArrowLeft:
+			if currentX > 0 {
+				currentX--
+			} else if currentY > 0 {
+				currentY--
+				currentX = len(text_buffer[currentY])
+			}
+
+		case termbox.KeyArrowRight:
+			if currentX < len(text_buffer[currentY])-1 {
+				currentX++
+			} else if currentY < len(text_buffer)-1 {
+				currentY++
+				currentX = 0
+			}
+		}
+		if len(text_buffer[currentY]) == 0 {
+			currentX = 0
+		} else if currentX > len(text_buffer[currentY])-1 {
+			currentX = len(text_buffer[currentY]) - 1
+		}
+	}
+}
+
 func run_editor() {
 	err := termbox.Init()
 	if err != nil {
@@ -161,15 +303,12 @@ func run_editor() {
 		}
 
 		termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
+		scroll_text_buffer()
 		display_text_buffer()
 		display_status_bar()
+		termbox.SetCursor(currentX-offsetX, currentY-offsetY)
 		termbox.Flush()
-
-		event := termbox.PollEvent()
-		if event.Type == termbox.EventKey && event.Key == termbox.KeyEsc {
-			termbox.Close()
-			break
-		}
+		process_key_press()
 	}
 }
 
