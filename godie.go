@@ -2,8 +2,10 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"log"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 
@@ -77,6 +79,25 @@ func write_file(filename string) {
 
 	writer.Flush()
 	modified = false
+}
+
+func read_stream(buffer string) {
+	text_buffer = [][]rune{}
+	line_number := 0
+	for _, line := range strings.Split(buffer, "\n") {
+		modified = true
+		text_buffer = append(text_buffer, []rune{})
+
+		for i := 0; i < len(line); i++ {
+			if line[i] == '\r' {
+				continue
+			}
+
+			text_buffer[line_number] = append(text_buffer[line_number], rune(line[i]))
+		}
+
+		line_number++
+	}
 }
 
 func insert_rune(event termbox.Event) {
@@ -164,6 +185,64 @@ func scroll_text_buffer() {
 
 	if currentX >= offsetX+COLS {
 		offsetX = offsetX - COLS + 1
+	}
+}
+
+func copy_line() {
+	copy_line := make([]rune, len(text_buffer[currentY]))
+
+	copy(copy_line, text_buffer[currentY])
+
+	copy_buffer = copy_line
+}
+
+func paste_line() {
+	if len(copy_buffer) == 0 {
+		if currentY < len(text_buffer)-1 {
+			currentY++
+			currentX = 0
+		}
+	}
+
+	new_text_buffer := make([][]rune, len(text_buffer)+1)
+	new_text_buffer[currentY] = copy_buffer
+
+	copy(new_text_buffer[:currentY], text_buffer[:currentY])
+	copy(new_text_buffer[currentY+1:], text_buffer[currentY:])
+
+	text_buffer = new_text_buffer
+}
+
+func cut_line() {
+	copy_line()
+	if currentY >= len(text_buffer) || len(text_buffer) < 2 {
+		return
+	}
+
+	new_text_buffer := make([][]rune, len(text_buffer)-1)
+
+	copy(new_text_buffer[:currentY], text_buffer[:currentY])
+	copy(new_text_buffer[currentY:], text_buffer[currentY+1:])
+
+	text_buffer = new_text_buffer
+
+	if currentY > 0 {
+		currentY--
+		currentX = 0
+	}
+}
+
+func push_buffer() {
+	copy_undo_buffer := make([][]rune, len(text_buffer))
+
+	copy(copy_undo_buffer, text_buffer)
+
+	undo_buffer = copy_undo_buffer
+}
+
+func pull_buffer() {
+	if len(undo_buffer) > 0 {
+		text_buffer = undo_buffer
 	}
 }
 
@@ -266,6 +345,102 @@ func get_key() termbox.Event {
 	return key_event
 }
 
+func execute_command() {
+	ROWS--
+
+	termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
+
+	display_text_buffer()
+	display_status_bar()
+
+	termbox.SetCursor(0, ROWS+1)
+	termbox.Flush()
+
+	command := ""
+
+command_loop:
+	for {
+		event := get_key()
+
+		switch event.Key {
+		case termbox.KeyEsc:
+			break command_loop
+
+		case termbox.KeyEnter:
+			content := ""
+
+			for _, line := range text_buffer {
+				content += string(line) + "\n"
+			}
+
+			is_search := false
+
+			if strings.ContainsRune(command, '=') {
+				is_search = true
+			}
+
+			cmd := exec.Command("sed", command)
+
+			if is_search {
+				cmd = exec.Command("sed", "-n", command)
+			}
+
+			cmd.Stdin = bytes.NewBufferString(content)
+
+			var output bytes.Buffer
+
+			cmd.Stdout = &output
+
+			err := cmd.Run()
+			if err != nil {
+				continue
+			}
+
+			result := output.String()
+
+			if len(result) > 0 {
+				if is_search {
+					currentY, _ = strconv.Atoi(strings.TrimSpace(strings.Split(result, "\n")[0]))
+					currentY--
+					currentX = 0
+					break command_loop
+				}
+				read_stream(result[:len(result)-1])
+			}
+
+			if currentY > len(text_buffer)-1 {
+				currentY = len(text_buffer) - 1
+			}
+
+			currentX = 0
+			break command_loop
+
+		case termbox.KeySpace:
+			command += " "
+
+		case termbox.KeyBackspace, termbox.KeyBackspace2:
+			if len(command) > 0 {
+				command = command[:len(command)-1]
+			}
+		}
+
+		if event.Ch != 0 {
+			command += string(event.Ch)
+			print_message(0, ROWS+1, termbox.ColorDefault, termbox.ColorDefault, command)
+		}
+
+		termbox.SetCursor(len(command), ROWS+1)
+
+		for i := len(command); i < COLS; i++ {
+			termbox.SetChar(i, ROWS+1, rune(' '))
+		}
+
+		termbox.Flush()
+	}
+
+	ROWS++
+}
+
 func process_key_press() {
 	key_event := get_key()
 
@@ -287,6 +462,24 @@ func process_key_press() {
 
 			case 'w':
 				write_file(source_file)
+
+			case 'c':
+				copy_line()
+
+			case 'p':
+				paste_line()
+
+			case 'd':
+				cut_line()
+
+			case 's':
+				push_buffer()
+
+			case 'l':
+				pull_buffer()
+
+			case 'x':
+				execute_command()
 			}
 		}
 	} else {
